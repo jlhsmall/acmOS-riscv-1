@@ -29,14 +29,21 @@ static void printk_write_num(int base, unsigned long long n, int neg) {
         n/=base;
     }
     char out[100];
-    int i=0;
-    if(neg)out[i++]='-';
-    while(ln){
-        if(a[ln]>9)out[i]=a[ln]-10+'a';
-        else out[i]=a[ln]+'0';
-        --ln;++i;
+    if(ln==0){
+        out[0]='0';
+        out[1]='\0';
     }
-    out[i]='\0';
+    else {
+        int i = 0;
+        if (neg)out[i++] = '-';
+        while (ln) {
+            if (a[ln] > 9)out[i] = a[ln] - 10 + 'a';
+            else out[i] = a[ln] + '0';
+            --ln;
+            ++i;
+        }
+        out[i] = '\0';
+    }
     printk_write_string(out);
 }
 
