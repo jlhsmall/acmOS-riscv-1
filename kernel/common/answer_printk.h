@@ -44,7 +44,6 @@ static void printk_write_num(int base, unsigned long long n, int neg) {
         }
         out[i] = '\0';
     }
-    out[i]='\0';
     printk_write_string(out);
 }
 
