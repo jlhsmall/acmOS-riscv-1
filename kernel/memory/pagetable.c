@@ -31,9 +31,7 @@ void pt_kern_vmmap(){
     ret = pt_map_pages(kernel_pagetable, KERNBASE, KERNBASE, (uint64)endTextSect - KERNBASE, PTE_R | PTE_X);
     ASSERT_EQ(ret, 0, "map kernel text");
     idx = 0;
-    printk("%d\n",idx);
     for(; idx < (uint64)endTextSect - KERNBASE; idx = idx + PGSIZE / 2){
-        printk("%c\n",idx);
         paddr_t mapped_pa = pt_query_address(kernel_pagetable, idx + KERNBASE);
         ASSERT_EQ(idx + KERNBASE,  mapped_pa,"kernel map");
     }

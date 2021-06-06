@@ -19,10 +19,10 @@ void enable_paging() {
 // Return the last-level page table entry.
 static pte_t* pt_query(pagetable_t pagetable, vaddr_t va, int alloc){
     if(va >= MAXVA) BUG_FMT("get va[0x%lx] >= MAXVA[0x%lx]", va, MAXVA);
-    printk("%lx %lx\n",pagetable,va);
+    //printk("%lx %lx\n",pagetable,va);
     // Suggested: 18 LoCs
-    pagetable_t p3,p2,p1,p0;
-    pte_t* e3=(pte_t*)((uint64)pagetable+PX(3,va));
+    pagetable_t p3,p2,p1;
+    pte_t* e3=(pte_t*)(pagetable+PX(3,va));
     if(PTE_FLAGS(*e3)&PTE_V)
         p3=(pagetable_t)PTE2PA(*e3);
     else if(!alloc)
@@ -32,8 +32,8 @@ static pte_t* pt_query(pagetable_t pagetable, vaddr_t va, int alloc){
         memset(p3, 0, BD_LEAF_SIZE);
         *e3= PA2PTE(p3)|PTE_V;
     }
-    printk("%lx %lx %lx\n",p3,e3,*e3);
-    pte_t* e2=(pte_t*)((uint64)p3+PX(2,va));
+    //printk("%lx %lx %lx\n",p3,e3,*e3);
+    pte_t* e2=(pte_t*)(p3+PX(2,va));
     if(PTE_FLAGS(*e2)&PTE_V)
         p2=(pagetable_t)PTE2PA(*e2);
     else if(!alloc)
@@ -44,8 +44,8 @@ static pte_t* pt_query(pagetable_t pagetable, vaddr_t va, int alloc){
         *e2= PA2PTE(p2)|PTE_V;
     }
 
-    printk("%lx %lx %lx\n",p2,e2,*e2);
-    pte_t* e1=(pte_t*)((uint64)p2+PX(1,va));
+    //printk("%lx %lx %lx %lx\n",p2,e2,*e2,PX(1,va));
+    pte_t* e1=(pte_t*)(p2+PX(1,va));
     if(PTE_FLAGS(*e1)&PTE_V)
         p1=(pagetable_t)PTE2PA(*e1);
     else if(!alloc)
@@ -56,9 +56,9 @@ static pte_t* pt_query(pagetable_t pagetable, vaddr_t va, int alloc){
         *e1= PA2PTE(p1)|PTE_V;
     }
 
-    printk("%lx %lx %lx\n",p1,e1,*e1);
-    pte_t* e0=(pte_t*)((uint64)p1+PX(0,va));
-    if(PTE_FLAGS(*e0)&PTE_V)
+    //printk("%lx %lx %lx\n",p1,e1,*e1);
+    pte_t* e0=(pte_t*)(p1+PX(0,va));
+    /*if(PTE_FLAGS(*e0)&PTE_V)
         p0=(pagetable_t)PTE2PA(*e0);
     else if(!alloc)
         return NULL;
@@ -66,31 +66,31 @@ static pte_t* pt_query(pagetable_t pagetable, vaddr_t va, int alloc){
         p0 = (pagetable_t) mm_kalloc();
         memset(p0, 0, BD_LEAF_SIZE);
         *e0= PA2PTE(p0)|PTE_V;
-    }
+    }*/
 
-    printk("%lx %lx %lx\n",p0,e0,*e0);
+    //printk("%lx %lx %lx\n",p0,e0,*e0);
     //return (pte_t*)((uint64)p0+(va&0xFFF));
     return e0;
 }
 int pt_map_pages(pagetable_t pagetable, vaddr_t va, paddr_t pa, uint64 size, int perm){
     // Suggested: 11 LoCs
     perm|=PTE_V;
-    uint64 cnt=size/PGSIZE;
+    uint64 cnt= PGROUNDUP(size)/PGSIZE;
+    va= PGROUNDDOWN(va);
     while(cnt--){
         pte_t *e=pt_query(pagetable,va,1);
         *e= PA2PTE(pa)|perm;
-        va+=64;
+        va+=PGSIZE;
         pa+=PGSIZE;
     }
-    printk("f**k\n");
     return 0; // Do not modify
 }
 
 paddr_t pt_query_address(pagetable_t pagetable, vaddr_t va){
     // Suggested: 3 LoCs
 
-    pte_t *e=pt_query(pagetable, va, 0);
-    printk("hai\n");
+    pte_t *e=pt_query(pagetable, va, 1);
+    if(e==NULL||(!((*e)&PTE_V))) return NULL;
     return PTE2PA(*e)+(va&0xFFF);
 }
 
