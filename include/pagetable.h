@@ -10,7 +10,6 @@
 
 extern pagetable_t kernel_pagetable;
 
-
 void pt_init();
 void _pt_disp_vpn(paddr_t pa);
 
