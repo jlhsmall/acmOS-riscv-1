@@ -1,18 +1,55 @@
 #include <defs.h>
 #include <riscv.h>
-extern void kernelvec();
-extern int devintr();
-void usertrapret();
-
+#include <process.h>
+#include <memlayout.h>
+#include <lock.h>
+#include "../user/stdlib.h"
+extern char trampoline[], usertrap1[], usertrap2[];
 void trap_init_vec(){
     // Only 1 LoC
     // 将kernelvec作为内核中断处理基地址写入stvec向量。
-
+    w_stvec((uint64)kernelvec);
 }
 // 真实的 syscall 处理过程
 // 根据你在 user/stdlib.h 中的 syscall 操作在这里对应地寻找目标
+/*
+static uint64 (*syscalls[])(void) = {
+        [SYS_exit]    sys_exit,
+        [SYS_exec]    sys_exec,
+};
+
+void
+syscall(void)
+{
+    int num;
+    process_t *p = myproc();
+
+    num = p->trapframe->a7;
+    if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
+        p->trapframe->a0 = syscalls[num]();
+    } else {
+        p->trapframe->a0 = -1;
+    }
+}*/
 void syscall(){
 
+}
+void sys_putc(char val){
+    asm volatile("":::"memory");
+}
+
+void sys_exit(int value){
+    asm volatile("":::"memory");
+}
+
+void sys_yield(){
+    thread_t *t = sched_dequeue();
+    acquire(&t->lock);
+    t->thread_state = RUNNABLE;
+    sched_enqueue(t);
+    //sched();
+    release(&t->lock);
+    asm volatile("":::"memory");
 }
 
 // 用户态的trap处理函数，内核态请参考 kernel/boot/start.c 中的 kernelvec
@@ -27,10 +64,12 @@ void usertrap(void) {
      * 判断发生trap的类型：syscall、设备中断、时钟中断等
      * 完成处理，进入到trap后半部分处理函数
      */
-
-
+    process_t *p = myproc();
+    p->trapframe->epc = r_sepc();
     if (r_scause() == 8) {
         // system call
+        p->trapframe->epc += 4;
+        intr_on();
         syscall();
     } else if ((which_dev = devintr()) != 0) {
         // ok
@@ -41,7 +80,8 @@ void usertrap(void) {
 
 
     // 处理时钟中断：重新调度
-    if (which_dev == 2) ;
+    if (which_dev == 2)
+        sys_yield();
     // 进入 trap 后半处理函数
     usertrapret();
 }
@@ -57,5 +97,19 @@ void usertrapret() {
      * 切换页表
      * 跳转到二进制代码还原现场的部分
      */
-    
+    process_t *p = myproc();
+    intr_off();
+    w_stvec(TRAMPOLINE + (usertrap1 - trampoline));
+    p->trapframe->kernel_satp = r_satp();
+    p->trapframe->kernel_sp = p->kstack + PGSIZE;
+    p->trapframe->kernel_trap = (uint64)usertrap;
+    p->trapframe->kernel_hartid = r_tp();
+    unsigned long x = r_sstatus();
+    x &= ~SSTATUS_SPP;
+    x |= SSTATUS_SPIE;
+    w_sstatus(x);
+    w_sepc(p->trapframe->epc);
+    uint64 satp = MAKE_SATP(p->pagetable);
+    uint64 fn = TRAMPOLINE + (usertrap2 - trampoline);
+    ((void (*)(uint64,uint64))fn)(TRAPFRAME, satp);
 }

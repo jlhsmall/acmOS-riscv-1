@@ -97,7 +97,10 @@ paddr_t pt_query_address(pagetable_t pagetable, vaddr_t va){
 int pt_unmap_addrs(pagetable_t pagetable, vaddr_t va){
     // Suggested: 2 LoCs
     pte_t *e=pt_query(pagetable, va, 0);
-    if(e!=NULL)*e^=PTE_V;
+    if(e!=NULL){
+        *e^=PTE_V;
+        mm_kfree(PTE2PA(*e));
+    }
     return 0; // Do not modify
 }
 
