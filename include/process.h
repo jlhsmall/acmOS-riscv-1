@@ -68,8 +68,6 @@ typedef struct process {
     struct list_head thread_list;
     process_state_t process_state;
     // 以下部分请根据自己的需要自行填充
-    process_state_t state;
-    void *chan;
     int xstate;
     int pid;
     int lock;
@@ -95,6 +93,7 @@ typedef struct thread {
     uint64 sp;
     struct lock lock;
     void *chan;
+    context_t context;
 
 } thread_t;
 typedef struct cpu {

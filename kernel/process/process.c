@@ -10,8 +10,7 @@ process_t proc[NPROC];
 thread_t *running[NCPU];
 struct list_head sched_list[NCPU];
 struct lock pidlock, tidlock, schedlock;
-int _pid, _tid;
-int nextpid = 1;
+int _pid=1, _tid=1;
 cpu_t* mycpu() {
     int id = cpuid();
     cpu_t *c = &cpus[id];
@@ -67,6 +66,9 @@ static uint64 load_binary(pagetable_t *target_page_table, const char *bin){
              * 通过 memcpy 将某一段复制进入这一块空间
              * 页表映射修改
              */
+            paddr_t old_paddr= pt_query_address(target_page_table,p_vaddr),new_paddr=mm_kalloc(seg_map_sz);
+            memcpy(new_paddr,old_paddr,seg_map_sz);
+            pt_map_pages(target_page_table,p_vaddr,old_paddr,seg_map_sz,0);
 		}
 	}
 	/* PC: the entry point */
@@ -83,11 +85,12 @@ static uint64 load_binary(pagetable_t *target_page_table, const char *bin){
  * 
  * 这个函数传入参数为一个二进制的代码和一个线程指针(具体传入规则可以自己修改)
  * 此外程序首次进入用户态之前，应该设置好trap处理向量为usertrap（或者你自定义的）
- *//*
+ */
 void procinit(void){
     process_t *p;
 
     lock_init(&pidlock);
+    lock_init(&tidlock);
     lock_init(&schedlock);
     for(p = proc; p < &proc[NPROC]; p++) {
         lock_init(&p->lock);
@@ -111,47 +114,47 @@ static void freeproc(process_t *p)
     p->sz = 0;
     p->pid = 0;
     p->parent = 0;
-    p->chan = 0;
     p->xstate = 0;
-    p->state = UNUSED;
+    p->process_state = UNUSED;
 }
 int allocpid() {
     int pid;
     acquire(&pidlock);
-    pid = nextpid;
-    nextpid = nextpid + 1;
+    pid = _pid;
+    _pid = _pid + 1;
     release(&pidlock);
 
     return pid;
 }
-
+int alloctid() {
+    int tid;
+    acquire(&tidlock);
+    tid=_tid;
+    _tid=_tid+1;
+    release(&tidlock);
+    return tid;
+}
 process_t *alloc_proc(const char* bin, thread_t *thr){
     process_t *p;
     for(p = proc; p < &proc[NPROC]; p++) {
         acquire(&p->lock);
-        if(p->state == UNUSED) {
+        if(p->process_state == UNUSED) {
             p->pid = allocpid();
-            p->state = IDLE;
-            // Allocate a trapframe page.
+            p->process_state = RUNNABLE;
             if((p->trapframe = (struct trapframe *)mm_kalloc()) == 0){
                 freeproc(p);
                 release(&p->lock);
                 return 0;
             }
-
-            // An empty user page table.
-            p->pagetable = proc_pagetable(p);
             if(p->pagetable == 0){
                 freeproc(p);
                 release(&p->lock);
                 return 0;
             }
-
-            // Set up new context to start executing at forkret,
-            // which returns to user space.
             memset(&p->context, 0, sizeof(p->context));
-            //p->context.ra = (uint64)forkret;
             p->context.sp = p->kstack + PGSIZE;
+            thr->proc=p;
+            list_append(&p->thread_list,&thr->process_list_thread_node);
 
             return p;
         } else {
@@ -160,11 +163,10 @@ process_t *alloc_proc(const char* bin, thread_t *thr){
     }
     return 0;
 }
-*/
 bool load_thread(file_type_t type){
     if(type == PUTC){
         thread_t *t = NULL;
-        //process_t *p = alloc_proc(&binary_putc_start, t);
+        process_t *p = alloc_proc(&binary_putc_start, t);
         if(!t) return false;
         sched_enqueue(t);
     } else {
@@ -195,7 +197,10 @@ bool sched_empty(){
 
 // 开始运行某个特定的函数
 void thread_run(thread_t *target){
-
+    cpu_t* c=mycpu();
+    c->thr=target;
+    swtch(&c->context, &target->context);
+    c->thr = 0;
 }
 
 // sched_start函数启动调度，按照调度的队列开始运行。
@@ -221,12 +226,12 @@ void proc_init(){
     // 接下来代码期望的目的：映射第一个用户线程并且插入调度队列
     if(!load_thread(PUTC)) BUG("Load failed");
 }
-/*
+
 void sched(){
     int intena;
-    process_t *p = myproc();
+    thread_t* t=mythr();
     intena = mycpu()->intena;
-    swtch(&p->context, &mycpu()->context);
+    swtch(&t->context, &mycpu()->context);
     mycpu()->intena = intena;
 }
 
@@ -235,27 +240,21 @@ void scheduler(){
     process_t *p;
     struct cpu *c = mycpu();
 
-    c->proc = 0;
+    c->thr = 0;
     for(;;){
-        // Avoid deadlock by ensuring that devices can interrupt.
         intr_on();
 
         int found = 0;
         for(p = proc; p < &proc[NPROC]; p++) {
             acquire(&p->lock);
-            if(p->state == RUNNABLE) {
-                // Switch to chosen process.  It is the process's job
-                // to release its lock and then reacquire it
-                // before jumping back to us.
-                p->state = RUNNING;
-                c->proc = p;
-                swtch(&c->context, &p->context);
-
-                // Process is done running for now.
-                // It should have changed its p->state before coming back.
-                c->proc = 0;
-
-                found = 1;
+            if(p->process_state == RUNNABLE) {
+                p->process_state = RUNNING;
+                for(struct list_head* l=&p->thread_list.next;l!=&p->thread_list;l=l->next){
+                    thread_t *t=(thread_t*)l;
+                    if(t->thread_state==RUNNABLE)
+                        thread_run(t);
+                    found = 1;
+                }
             }
             release(&p->lock);
         }
@@ -265,43 +264,63 @@ void scheduler(){
         }
     }
 }
-void sleep(void *chan, struct spinlock *lk){
+void sleep(void *chan, struct lock *lk){
     process_t *p = myproc();
-    if(lk != &p->lock){
+    thread_t *t = mythr();
+    if(lk != &p->lock && lk != &t->lock){
         acquire(&p->lock);
+        acquire(&t->lock);
         release(lk);
     }
-    p->chan = chan;
-    p->state = SLEEPING;
+    else if(lk != &p->lock){
+        acquire(&p->lock);
+    }
+    else if(lk !=&t->lock)
+        acquire(&t->lock);
+    t->chan = chan;
+    p->process_state = SLEEPING;
+    t->thread_state = SLEEPING;
     sched();
-    p->chan = 0;
-    if(lk != &p->lock){
+    t->chan = 0;
+    if(lk != &p->lock && lk != &t->lock){
         release(&p->lock);
+        release(&t->lock);
         acquire(lk);
     }
+    else if(lk != &p->lock){
+        release(&p->lock);
+    }
+    else if(lk !=&t->lock)
+        release(&t->lock);
 }
 void wakeup(void *chan){
     process_t *p;
     for(p = proc; p < &proc[NPROC]; p++) {
         acquire(&p->lock);
-        if(p->state == SLEEPING && p->chan == chan) {
-            p->state = RUNNABLE;
+        for(struct list_head *l= &p->thread_list.next;l!=&p->thread_list;l=l->next){
+            thread_t *t = (thread_t*)l;
+            acquire(&t->lock);
+            if(t->thread_state == SLEEPING && t->chan == chan){
+                t->thread_state = RUNNABLE;
+                p->process_state = RUNNABLE;
+            }
+            release(&t->lock);
         }
         release(&p->lock);
     }
 }
 
-static void wakeup1(process_t *p){
-    if(!holding_lock(&p->lock))
+static void wakeup1(thread_t *t){
+    if(!holding_lock(&t->lock))
         sys_exit(-1);
-    if(p->chan == p && p->state == SLEEPING) {
-        p->state = RUNNABLE;
+    if(t->chan == t && t->thread_state == SLEEPING) {
+        t->thread_state = RUNNABLE;
     }
 }
 int wait(uint64 addr){
     process_t *np;
     int havekids, pid;
-    struct proc *p = myproc();
+    process_t *p = myproc();
 
     acquire(&p->lock);
 
@@ -311,7 +330,7 @@ int wait(uint64 addr){
             if(np->parent == p){
                 acquire(&np->lock);
                 havekids = 1;
-                if(np->state == ZOMBIE){
+                if(np->process_state == ZOMBIE){
                     pid = np->pid;
                     if(addr != 0 && copyout(p->pagetable, addr, (char *)&np->xstate,
                                             sizeof(np->xstate)) < 0) {
@@ -328,55 +347,12 @@ int wait(uint64 addr){
             }
         }
 
-        // No point waiting if we don't have any children.
-        if(!havekids || p->killed){
+        if(!havekids){
             release(&p->lock);
             return -1;
         }
 
-        // Wait for a child to exit.
-        sleep(p, &p->lock);  //DOC: wait-sleep
+        sleep(p, &p->lock);
     }
 }
-int
-copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
-{
-    uint64 n, va0, pa0;
-    int got_null = 0;
-
-    while(got_null == 0 && max > 0){
-        va0 = PGROUNDDOWN(srcva);
-        // walkaddr checks that the user-supplied virtual address is partof the process’s user address space,
-        // so programs cannot trick the kernel into reading other memory
-        pa0 = walkaddr(pagetable, va0);
-        if(pa0 == 0)
-            return -1;
-        n = PGSIZE - (srcva - va0);
-        if(n > max)
-            n = max;
-
-        // Since the kernel maps all physical RAM addresses to the same kernel virtual address,
-        // copyinstr can directly copy string bytes fromp a0 to dst
-        char *p = (char *) (pa0 + (srcva - va0));
-        while(n > 0){
-            if(*p == '\0'){
-                *dst = '\0';
-                got_null = 1;
-                break;
-            } else {
-                *dst = *p;
-            }
-            --n;
-            --max;
-            p++;
-            dst++;
-        }
-
-        srcva = va0 + PGSIZE;
-    }
-    if(got_null){
-        return 0;
-    } else {
-        return -1;
-    }
-}*/
+}
